@@ -152,6 +152,7 @@ private:
 	 * view
 	 */
 	void makeMeasurement();
+    void makeDebugMeasurement(float h);
 
 	/**
 	 * publish the current mission state information
@@ -179,7 +180,7 @@ _generator(ros::Time::now().toSec())
 	_person_found_sub = _nh.subscribe<aa241x_mission::PersonEstimate>("person_found", 10, &MissionNode::personFoundCallback, this);
 
 	// advertise publishers
-	_measurement_pub = _nh.advertise<aa241x_mission::SensorMeasurement>("measurement", 10);
+	_measurement_pub = _nh.advertise<aa241x_mission::SensorMeasurement>("measurement", 100);
 	_mission_state_pub = _nh.advertise<aa241x_mission::MissionState>("mission_state", 10);
 
 	// advertise coordinate conversion and landing location
@@ -299,7 +300,7 @@ void MissionNode::makeMeasurement() {
 
 	// get the sensor distribution based on the equation
 	float sensor_std = _sensor_stddev_a + h * _sensor_stddev_b;
-	std::normal_distribution<float> pos_distribution(0, sensor_std);
+	std::normal_distribution<float> pos_distribution(0, sqrt(sensor_std));
 
 	// the measurement message
 	aa241x_mission::SensorMeasurement meas;
@@ -329,6 +330,43 @@ void MissionNode::makeMeasurement() {
 	_measurement_pub.publish(meas);
 }
 
+
+void MissionNode::makeDebugMeasurement(float h) {
+    // let the input be the height for testing purposes
+
+	// calculate FOV of the sensor
+	float radius = (_sensor_d_mult * h + _sensor_d_offset) / 2.0f;	// [m]
+
+	// get the sensor distribution based on the equation
+	float sensor_std = _sensor_stddev_a + h * _sensor_stddev_b;
+	std::normal_distribution<float> pos_distribution(0, sensor_std);
+
+	// the measurement message
+	aa241x_mission::SensorMeasurement meas;
+	meas.header.stamp = ros::Time::now();
+	meas.num_measurements = 0;
+
+	// check if there are any people in view
+    float n, e;
+	for (uint8_t i = 0; i < _people.size(); i++) {
+		Eigen::Vector2f pos = _people[i];
+
+		// get the N and E coordinates of the measurement
+		n = pos_distribution(_generator) + pos(0);
+		e = pos_distribution(_generator) + pos(1);
+
+		// add to the message
+		meas.num_measurements++;
+		meas.id.push_back(i);
+		meas.n.push_back(n);
+		meas.e.push_back(e);
+	}
+
+	// publish a list of position measurements or an empty measurement
+	_measurement_pub.publish(meas);
+}
+
+
 void MissionNode::publishMissionState() {
 
 	// populate the topic data
@@ -356,6 +394,23 @@ void MissionNode::publishMissionState() {
 }
 
 int MissionNode::run() {
+
+    // debug -> just output the "measurement" for some logging data
+    int debug_counter = 0;
+    ros::Rate debug_rate(100);
+    while (ros::ok()) {
+
+        if (debug_counter > 1500) {
+            break;
+        }
+
+        // "make" a measurement
+        makeDebugMeasurement(40.0f);
+
+        debug_rate.sleep();
+        debug_counter++;
+    }
+
 
 	uint8_t counter = 0;	// needed to rate limit the mission state info
 	ros::Rate rate(1);		// run the loop at 1Hz, which allows mission state at 0.5Hz and measurement at 1/3Hz
